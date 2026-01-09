@@ -4,14 +4,26 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 	"path/filepath"
+	"time"
+
+	"lcc-go/utils"
 
 	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+func TeamsToArray() []map[string]string {
+	arr := []map[string]string{}
+	for _, t := range Teams {
+		arr = append(arr, map[string]string{
+			"teamName": t.Name,
+		})
+	}
+	return arr
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -25,6 +37,23 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	Mutex.Lock()
 	Clients[id] = Client{ID: id, Conn: conn}
+
+	conn.WriteJSON(map[string]any{
+		"event": "STATE_SYNC",
+		"data": map[string]any{
+			"buzzOpen": State.BuzzOpen,
+			"winner":   nil,
+			"teams":    TeamsToArray(),
+		},
+	})
+
+	conn.WriteJSON(map[string]any{
+		"event": "SERVER_INFO",
+		"data": map[string]any{
+			"ip":   utils.GetLocalIP(),
+			"port": 3000,
+		},
+	})
 	Mutex.Unlock()
 
 	for {
@@ -40,20 +69,37 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 		case "JOIN":
 			name := data.(string)
+
 			Mutex.Lock()
-			if len(Teams) >= 4 {
-				conn.WriteJSON(map[string]any{"event": "ROOM_FULL"})
-				Mutex.Unlock()
-				continue
-			}
 			Teams[id] = Team{ID: id, Name: name}
 			Mutex.Unlock()
-			Broadcast("TEAM_LIST", Teams)
+
+			conn.WriteJSON(map[string]any{
+				"event": "JOIN_OK",
+			})
+
+			Broadcast("STATE_SYNC", map[string]any{
+				"buzzOpen": State.BuzzOpen,
+				"winner":   nil,
+				"teams":    TeamsToArray(),
+			})
 
 		case "OPEN_BUZZ":
 			ResetGame()
 			State.BuzzOpen = true
 			Broadcast("BUZZ_OPEN", nil)
+
+		case "GET_STATE":
+			Mutex.Lock()
+			conn.WriteJSON(map[string]any{
+				"event": "STATE_SYNC",
+				"data": map[string]any{
+					"buzzOpen": State.BuzzOpen,
+					"winner":   nil,
+					"teams":    TeamsToArray(),
+				},
+			})
+			Mutex.Unlock()
 
 		case "BUZZ":
 			Mutex.Lock()
@@ -61,6 +107,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				Mutex.Unlock()
 				continue
 			}
+
 			State.WinnerID = id
 			State.BuzzOpen = false
 			winner := Teams[id]
@@ -82,7 +129,11 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	delete(Teams, id)
 	Mutex.Unlock()
 
-	Broadcast("TEAM_LIST", Teams)
+	Broadcast("STATE_SYNC", map[string]any{
+		"buzzOpen": State.BuzzOpen,
+		"winner":   nil,
+		"teams":    TeamsToArray(),
+	})
 }
 
 func StartServer() *http.Server {
@@ -90,7 +141,7 @@ func StartServer() *http.Server {
 
 	mux.HandleFunc("/ws", wsHandler)
 
-	buildDir := "build"
+	buildDir := "frontend"
 	fs := http.FileServer(http.Dir(buildDir))
 
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,8 +160,10 @@ func StartServer() *http.Server {
 		Handler: mux,
 	}
 
+	ip := utils.GetLocalIP()
+
 	go func() {
-		log.Println("Server running at :3000")
+		log.Println("Server running at http://" + ip + ":3000")
 		server.ListenAndServe()
 	}()
 
