@@ -3,8 +3,9 @@ package server
 import "sync"
 
 type GameState struct {
-	BuzzOpen bool
-	WinnerID string
+	BuzzOpen        bool
+	WinnerID        string
+	Session         string
 }
 
 type Team struct {
@@ -13,7 +14,7 @@ type Team struct {
 }
 
 var (
-	State   = GameState{}
+	State   = GameState{Session: "WAJIB"}
 	Teams   = map[string]Team{}
 	Clients = map[string]Client{}
 	Mutex   sync.Mutex

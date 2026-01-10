@@ -37,25 +37,15 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	Mutex.Lock()
 	Clients[id] = Client{ID: id, Conn: conn}
-
-	conn.WriteJSON(map[string]any{
-		"event": "STATE_SYNC",
-		"data": map[string]any{
-			"buzzOpen": State.BuzzOpen,
-			"winner":   nil,
-			"teams":    TeamsToArray(),
-		},
-	})
-
-	conn.WriteJSON(map[string]any{
-		"event": "SERVER_INFO",
-		"data": map[string]any{
-			"ip":   utils.GetLocalIP(),
-			"port": 3000,
-		},
-	})
 	Mutex.Unlock()
 
+	Broadcast("STATE_SYNC",
+		map[string]any{
+			"buzzOpen":    State.BuzzOpen,
+			"winner":      nil,
+			"teams":       TeamsToArray(),
+			"sessionName": State.Session,
+		})
 	for {
 		var msg map[string]any
 		if err := conn.ReadJSON(&msg); err != nil {
@@ -79,28 +69,52 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			})
 
 			Broadcast("STATE_SYNC", map[string]any{
-				"buzzOpen": State.BuzzOpen,
-				"winner":   nil,
-				"teams":    TeamsToArray(),
+				"buzzOpen":    State.BuzzOpen,
+				"winner":      nil,
+				"teams":       TeamsToArray(),
+				"sessionName": State.Session,
 			})
-
+		case "CHANGE_SESSION":
+			sessionName := data.(string)
+			Mutex.Lock()
+			State.Session = sessionName
+			Mutex.Unlock()
+			Broadcast("STATE_SYNC", map[string]any{
+				"buzzOpen":    State.BuzzOpen,
+				"winner":      nil,
+				"teams":       TeamsToArray(),
+				"sessionName": State.Session,
+			})
 		case "OPEN_BUZZ":
 			ResetGame()
-			State.BuzzOpen = true
-			Broadcast("BUZZ_OPEN", nil)
-
-		case "GET_STATE":
 			Mutex.Lock()
-			conn.WriteJSON(map[string]any{
-				"event": "STATE_SYNC",
-				"data": map[string]any{
-					"buzzOpen": State.BuzzOpen,
-					"winner":   nil,
-					"teams":    TeamsToArray(),
-				},
-			})
+			State.BuzzOpen = true
+			targetTime := time.Now().Add(10 * time.Second).UnixMilli()
 			Mutex.Unlock()
 
+			Broadcast("BUZZ_OPEN", nil)
+			Broadcast("START_COUNTDOWN", map[string]any{
+				"targetTime": targetTime,
+			})
+
+		case "GET_STATE":
+			Broadcast("STATE_SYNC",
+				map[string]any{
+					"buzzOpen":    State.BuzzOpen,
+					"winner":      nil,
+					"teams":       TeamsToArray(),
+					"sessionName": State.Session,
+				})
+		case "START_COUNTDOWN":
+			Mutex.Lock()
+			targetTime := time.Now().Add(10 * time.Second).UnixMilli()
+			Mutex.Unlock()
+
+			Broadcast("START_COUNTDOWN", map[string]any{
+				"targetTime": targetTime,
+			})
+		case "RESET_COUNTDOWN":
+			Broadcast("RESET_COUNTDOWN", nil)
 		case "BUZZ":
 			Mutex.Lock()
 			if !State.BuzzOpen || State.WinnerID != "" {
@@ -111,11 +125,16 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			State.WinnerID = id
 			State.BuzzOpen = false
 			winner := Teams[id]
+			targetTime := time.Now().Add(10 * time.Second).UnixMilli()
 			Mutex.Unlock()
 
 			Broadcast("BUZZ_WINNER", map[string]any{
 				"teamName": winner.Name,
 				"time":     time.Now().UnixMilli(),
+			})
+
+			Broadcast("START_COUNTDOWN", map[string]any{
+				"targetTime": targetTime,
 			})
 
 		case "RESET":
@@ -130,9 +149,10 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	Mutex.Unlock()
 
 	Broadcast("STATE_SYNC", map[string]any{
-		"buzzOpen": State.BuzzOpen,
-		"winner":   nil,
-		"teams":    TeamsToArray(),
+		"buzzOpen":    State.BuzzOpen,
+		"winner":      nil,
+		"teams":       TeamsToArray(),
+		"sessionName": State.Session,
 	})
 }
 
