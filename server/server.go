@@ -39,12 +39,20 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	Clients[id] = Client{ID: id, Conn: conn}
 	Mutex.Unlock()
 
+	ip := utils.GetLocalIP()
+
 	Broadcast("STATE_SYNC",
 		map[string]any{
 			"buzzOpen":    State.BuzzOpen,
 			"winner":      nil,
 			"teams":       TeamsToArray(),
 			"sessionName": State.Session,
+		})
+
+	Broadcast("SERVER_INFO",
+		map[string]any{
+			"port": 3000,
+			"ip":   ip,
 		})
 	for {
 		var msg map[string]any
